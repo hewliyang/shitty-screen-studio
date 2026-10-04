@@ -5,8 +5,8 @@ pub const STEP: f64 = 1.0 / 120.0;
 
 /// Fraction of the zoomed view the cursor can roam before the camera re-centres.
 const DEAD_ZONE: f32 = 0.5;
-/// Last-resort margin: the cursor never gets closer than this fraction of the half view to the edge.
-const EDGE_MARGIN: f32 = 0.05;
+/// How much stiffer the pan gets while the cursor is at or past the view edge.
+const EDGE_BOOST: f32 = 2.5;
 
 /// Camera timing derived from one "camera speed" value in 0..1, where 0.5 is the default.
 #[derive(Clone, Copy)]
@@ -36,28 +36,29 @@ impl Tuning {
 struct Pan {
     goal: Spring,
     pos: Spring,
+    omega: f32,
 }
 
 impl Pan {
     fn new(pos: f32, omega: f32) -> Self {
-        Self { goal: Spring::new(pos, omega), pos: Spring::new(pos, omega) }
+        Self { goal: Spring::new(pos, omega), pos: Spring::new(pos, omega), omega }
     }
 
-    fn step(&mut self, target: f32, dt: f32) {
+    fn step(&mut self, target: f32, dt: f32, boost: f32) {
+        let omega = self.omega * boost;
+        self.goal.omega = omega;
+        self.pos.omega = omega;
         self.goal.step(target, dt);
         self.pos.step(self.goal.pos, dt);
     }
+}
 
-    /// Drags the pan just enough to keep the cursor inside the view.
-    fn keep_visible(&mut self, cursor: f32, half: f32) {
-        let reach = half * (1.0 - EDGE_MARGIN);
-        let lo = (cursor - reach).max(half);
-        let hi = (cursor + reach).min(1.0 - half);
-        if lo <= hi && !(lo..=hi).contains(&self.pos.pos) {
-            self.pos.pos = self.pos.pos.clamp(lo, hi);
-            self.goal.pos = self.goal.pos.clamp(lo, hi);
-        }
-    }
+/// Stiffens the pan as the cursor nears the view edge, so fast moves are caught without a hard clamp.
+/// Both axes share it so a diagonal pan stays straight.
+fn edge_boost(cursor: (f32, f32), view: (f32, f32), half: f32) -> f32 {
+    let reach = ((cursor.0 - view.0).abs()).max((cursor.1 - view.1).abs()) / half;
+    let u = ((reach - 0.7) / 0.5).clamp(0.0, 1.0);
+    1.0 + EDGE_BOOST * u * u * (3.0 - 2.0 * u)
 }
 
 /// Keeps the camera still while the cursor stays inside the dead zone of the current view.
@@ -166,8 +167,18 @@ pub fn raw_cursor(samples: &[CursorSample], t: f64) -> (f32, f32) {
     }
 }
 
-fn zoom_at(zooms: &[ZoomSegment], t: f64) -> Option<f32> {
-    zooms.iter().find(|z| t >= z.start && t < z.end).map(|z| z.scale)
+fn zoom_at(zooms: &[ZoomSegment], t: f64) -> Option<&ZoomSegment> {
+    zooms.iter().find(|z| t >= z.start && t < z.end && z.scale > 1.0)
+}
+
+/// Where a zoom should land: the first click in the segment, else where the cursor rests once the zoom settles.
+fn zoom_aim(samples: &[CursorSample], seg: &ZoomSegment, settle: f64) -> (f32, f32) {
+    let from = samples.partition_point(|s| s.t < seg.start);
+    let click = samples[from..].iter().take_while(|s| s.t < seg.end).enumerate().find(|&(i, s)| s.down && (i + from == 0 || !samples[i + from - 1].down));
+    match click {
+        Some((_, s)) => (s.x, s.y),
+        None => raw_cursor(samples, settle.min(seg.end)),
+    }
 }
 
 impl Motion {
@@ -190,6 +201,7 @@ impl Motion {
         let mut pan_y = Pan::new(0.5, tune.pan_omega);
         let mut target: Option<(f32, f32)> = None;
         let mut seg_size = 0.5f32;
+        let mut landing = 0.0f64;
 
         let mut frames = Vec::with_capacity(n);
         for i in 0..n {
@@ -203,24 +215,34 @@ impl Motion {
                 cy.step(ry, dt);
             }
 
-            let zoom = zoom_at(zooms, t).unwrap_or(1.0);
-            if zoom > 1.0 {
+            if let Some(seg) = zoom_at(zooms, t) {
+                let zoom = seg.scale;
                 seg_size = 1.0 / zoom;
-                let focus = follow(target, (rx, ry), raw_cursor(samples, t + tune.lookahead), zoom);
-                if target.is_none() && size > 0.98 {
-                    pan_x = Pan::new(focus.0, tune.pan_omega);
-                    pan_y = Pan::new(focus.1, tune.pan_omega);
+                let half = 0.5 / zoom;
+                let clamp = |v: f32| v.clamp(half, 1.0 - half);
+                // Entering a zoom aims straight at the work area and holds there until the zoom lands,
+                // so the camera pushes in along one line instead of zooming and then panning.
+                if target.is_none() {
+                    let aim = zoom_aim(samples, seg, t + tune.zoom_in as f64);
+                    let aim = (clamp(aim.0), clamp(aim.1));
+                    if size > 0.98 {
+                        pan_x = Pan::new(aim.0, tune.pan_omega);
+                        pan_y = Pan::new(aim.1, tune.pan_omega);
+                    }
+                    target = Some(aim);
+                    landing = t + tune.zoom_in as f64;
                 }
+                let settling = t < landing;
+                let focus = match target {
+                    Some(held) if settling => held,
+                    _ => follow(target, (rx, ry), raw_cursor(samples, t + tune.lookahead), zoom),
+                };
                 target = Some(focus);
-                pan_x.step(focus.0, dt);
-                pan_y.step(focus.1, dt);
+                let boost = if settling { 1.0 } else { edge_boost((rx, ry), (pan_x.pos.pos, pan_y.pos.pos), half) };
+                pan_x.step(focus.0, dt, boost);
+                pan_y.step(focus.1, dt, boost);
                 log_size.retarget(seg_size.ln(), tune.zoom_in);
                 size = log_size.step(dt).exp();
-                if size < 0.98 {
-                    let half = size / 2.0;
-                    pan_x.keep_visible(cx.pos, half);
-                    pan_y.keep_visible(cy.pos, half);
-                }
             } else {
                 target = None;
                 log_size.retarget(0.0, tune.zoom_out);
