@@ -7,6 +7,8 @@ pub const STEP: f64 = 1.0 / 120.0;
 const DEAD_ZONE: f32 = 0.5;
 /// How much stiffer the pan gets while the cursor is at or past the view edge.
 const EDGE_BOOST: f32 = 2.5;
+/// Extra start acceleration for zoom-in, so it snaps in and settles slowly. Must stay below 20 to keep the ease monotonic.
+const ZOOM_IN_KICK: f32 = 14.0;
 /// Seconds the full view holds before the video ends.
 const END_HOLD: f64 = 0.15;
 
@@ -25,7 +27,7 @@ impl Tuning {
         let s = speed.clamp(0.0, 1.0);
         let pick = |slow: f32, mid: f32, fast: f32| if s < 0.5 { slow + (mid - slow) * s * 2.0 } else { mid + (fast - mid) * (s - 0.5) * 2.0 };
         Self {
-            zoom_in: pick(1.2, 0.8, 0.5),
+            zoom_in: pick(0.9, 0.6, 0.4),
             zoom_out: pick(1.5, 1.0, 0.6),
             pan_omega: pick(7.0, 11.0, 16.0),
             lookahead: pick(0.4, 0.3, 0.2) as f64,
@@ -111,19 +113,20 @@ impl Spring {
     }
 }
 
-/// Time-based ease that starts and lands with zero acceleration. A retarget mid-flight
-/// keeps the current velocity, so chained zooms never jerk.
+/// Time-based ease that lands with zero acceleration. `kick` front-loads the motion with an
+/// initial acceleration. A retarget mid-flight keeps the current velocity, so chained zooms never jerk.
 struct Ease {
     from: f32,
     vel: f32,
     to: f32,
     elapsed: f32,
     dur: f32,
+    kick: f32,
 }
 
 impl Ease {
     fn new(pos: f32) -> Self {
-        Self { from: pos, vel: 0.0, to: pos, elapsed: 0.0, dur: 1.0 }
+        Self { from: pos, vel: 0.0, to: pos, elapsed: 0.0, dur: 1.0, kick: 0.0 }
     }
 
     fn sample(&self) -> (f32, f32) {
@@ -131,17 +134,19 @@ impl Ease {
         let (u2, u3) = (u * u, u * u * u);
         let d = self.to - self.from;
         let v = self.vel * self.dur;
-        let pos = self.from + d * u3 * (10.0 - 15.0 * u + 6.0 * u2) + v * (u - 6.0 * u3 + 8.0 * u3 * u - 3.0 * u3 * u2);
-        let dpos = d * 30.0 * u2 * (1.0 - u) * (1.0 - u) + v * (1.0 - 18.0 * u2 + 32.0 * u3 - 15.0 * u3 * u);
+        let a = self.kick * d;
+        let w = 1.0 - u;
+        let pos = self.from + d * u3 * (10.0 - 15.0 * u + 6.0 * u2) + v * (u - 6.0 * u3 + 8.0 * u3 * u - 3.0 * u3 * u2) + a * 0.5 * u2 * w * w * w;
+        let dpos = d * 30.0 * u2 * w * w + v * (1.0 - 18.0 * u2 + 32.0 * u3 - 15.0 * u3 * u) + a * (u * w * w * w - 1.5 * u2 * w * w);
         (pos, dpos / self.dur)
     }
 
-    fn retarget(&mut self, to: f32, dur: f32) {
+    fn retarget(&mut self, to: f32, dur: f32, kick: f32) {
         if (to - self.to).abs() < 1e-6 {
             return;
         }
         let (pos, vel) = self.sample();
-        *self = Self { from: pos, vel, to, elapsed: 0.0, dur };
+        *self = Self { from: pos, vel, to, elapsed: 0.0, dur, kick };
     }
 
     fn step(&mut self, dt: f32) -> f32 {
@@ -245,11 +250,11 @@ impl Motion {
                 let boost = if settling { 1.0 } else { edge_boost((rx, ry), (pan_x.pos.pos, pan_y.pos.pos), half) };
                 pan_x.step(focus.0, dt, boost);
                 pan_y.step(focus.1, dt, boost);
-                log_size.retarget(seg_size.ln(), tune.zoom_in);
+                log_size.retarget(seg_size.ln(), tune.zoom_in, ZOOM_IN_KICK);
                 size = log_size.step(dt).exp();
             } else {
                 target = None;
-                log_size.retarget(0.0, tune.zoom_out);
+                log_size.retarget(0.0, tune.zoom_out, 0.0);
                 size = log_size.step(dt).exp();
             }
 
