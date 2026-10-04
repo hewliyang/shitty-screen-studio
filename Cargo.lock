@@ -4894,7 +4894,7 @@ dependencies = [
 
 [[package]]
 name = "shitty-screen-studio"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "block2 0.6.2",
