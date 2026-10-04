@@ -1,5 +1,5 @@
 use crate::camera::CameraHandle;
-use crate::project::{CameraTrack, ColorSpace, CursorSample, Project, Recording};
+use crate::project::{CameraTrack, ColorSpace, CursorSample, KeyPress, Project, Recording};
 use anyhow::{Context as _, Result, anyhow, bail};
 use block2::RcBlock;
 use dispatch2::DispatchQueue;
@@ -55,6 +55,8 @@ pub struct RecordOptions {
     pub system_audio: bool,
     pub mic: bool,
     pub camera: bool,
+    /// Record keyboard shortcuts, never plain typing.
+    pub keys: bool,
 }
 
 impl RecordOptions {
@@ -65,7 +67,7 @@ impl RecordOptions {
 
 impl Default for RecordOptions {
     fn default() -> Self {
-        Self { source: Source::Display(CGMainDisplayID()), system_audio: false, mic: false, camera: false }
+        Self { source: Source::Display(CGMainDisplayID()), system_audio: false, mic: false, camera: false, keys: false }
     }
 }
 
@@ -590,6 +592,9 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
     if options.mic {
         crate::camera::ensure_access(true)?;
     }
+    if options.keys {
+        crate::keys::ensure_access()?;
+    }
     let content = shareable_content()?;
     let target = target(&content, options.source)?;
     let points_width = target.region.size.width as f32;
@@ -649,6 +654,17 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
         let region = target.region;
         std::thread::spawn(move || track_cursor(stop, region))
     };
+    let key_tap = match options.keys.then(|| crate::keys::start(stop.clone())).transpose() {
+        Ok(tap) => tap,
+        Err(e) => {
+            stop.store(true, Ordering::Relaxed);
+            let _ = tracker.join();
+            if let Some(camera) = camera {
+                let _ = camera.finish();
+            }
+            return Err(e);
+        }
+    };
     let started = wait_completion(|h| unsafe { stream.startCaptureWithCompletionHandler(Some(h)) })
         .context("start screen capture")
         .and_then(|()| {
@@ -664,6 +680,9 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
     if let Err(e) = started {
         stop.store(true, Ordering::Relaxed);
         let _ = tracker.join();
+        if let Some(tap) = key_tap {
+            let _ = tap.join();
+        }
         if let Some(camera) = camera {
             let _ = camera.finish();
         }
@@ -685,6 +704,7 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
     let end = host_now();
     let _ = wait_completion(|h| unsafe { stream.stopCaptureWithCompletionHandler(Some(h)) });
     let cursor = tracker.join().unwrap_or_default();
+    let keys = key_tap.map(|tap| tap.join().unwrap_or_default()).unwrap_or_default();
     let (duration, start) = {
         let mut w = writer.lock().unwrap();
         (w.finish(end)?, w.start.unwrap_or(end))
@@ -715,6 +735,11 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
     if let Some(s) = cursor.first_mut() {
         s.t = s.t.max(0.0);
     }
+    let keys: Vec<KeyPress> = keys
+        .into_iter()
+        .map(|k| KeyPress { t: k.t - start, ..k })
+        .filter(|k| (0.0..=duration).contains(&k.t))
+        .collect();
 
     let project = Project {
         dir: dir.to_path_buf(),
@@ -730,6 +755,7 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
             color: ColorSpace::DisplayP3,
             camera,
             timeline: None,
+            keys,
         },
     };
     project.save()?;

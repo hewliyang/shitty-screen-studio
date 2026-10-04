@@ -17,6 +17,13 @@ pub struct Click {
     pub y: f32,
 }
 
+/// A shortcut pressed during recording, with its display label such as "⌘ ⇧ P".
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct KeyPress {
+    pub t: f64,
+    pub keys: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct ZoomSegment {
     pub start: f64,
@@ -57,6 +64,8 @@ pub struct Recording {
     pub camera: Option<CameraTrack>,
     #[serde(default)]
     pub timeline: Option<crate::edit::Timeline>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<KeyPress>,
 }
 
 impl Recording {

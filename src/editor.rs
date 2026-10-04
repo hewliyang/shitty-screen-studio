@@ -122,6 +122,7 @@ impl Editor {
             style,
             motion: Motion::build(&project.rec.cursor, &zooms, project.rec.duration, &style),
             clicks: clicks.clone(),
+            keys: project.rec.keys.clone(),
             timeline: timeline.clone(),
         });
         let player = Player::new(&project, scene);
@@ -225,6 +226,7 @@ impl Editor {
             style: self.style,
             motion: Motion::build(&self.project.rec.cursor, &self.zooms, self.project.rec.duration, &self.style),
             clicks: self.clicks.clone(),
+            keys: self.project.rec.keys.clone(),
             timeline: self.timeline.clone(),
         };
         self.player.update(Arc::new(scene));
@@ -917,6 +919,27 @@ impl Editor {
                         }))
                         .child(segments().children(corners)),
                 )
+            })
+            .when(!self.project.rec.keys.is_empty(), |d| {
+                let current = self.style.keys_position;
+                let row = |labels: [&'static str; 3], base: usize| {
+                    segments().children(labels.into_iter().enumerate().map(|(i, label)| {
+                        let pos = base + i;
+                        segment(("keys-pos", pos), label, current as usize == pos).px_1().text_size(px(SMALL)).flex_1().on_click(cx.listener(
+                            move |this, _, _, cx| {
+                                this.style.keys_position = pos as u8;
+                                this.refresh();
+                                this.persist();
+                                cx.notify();
+                            },
+                        ))
+                    }))
+                };
+                let (top, bottom) = (row(["Top Left", "Top", "Top Right"], 0), row(["Bottom Left", "Bottom", "Bottom Right"], 3));
+                let toggle = self.render_toggle("keys-visible", "Show shortcuts", self.style.keys_visible, cx, |s| {
+                    s.keys_visible = !s.keys_visible
+                });
+                d.child(section("Keystrokes").child(toggle).child(top).child(bottom))
             })
             .child(
                 div()

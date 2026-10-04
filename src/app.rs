@@ -580,12 +580,13 @@ impl Studio {
             .flex()
             .flex_col()
             .gap_2()
-            .child(group_title("Audio & Camera"))
+            .child(group_title("Inputs"))
             .child(
                 group()
                     .child(item("mic", "Microphone", true, self.options.mic, |o| o.mic = !o.mic))
                     .child(item("sys-audio", "System Audio", false, self.options.system_audio, |o| o.system_audio = !o.system_audio))
-                    .child(item("camera", "Camera", false, self.options.camera, |o| o.camera = !o.camera)),
+                    .child(item("camera", "Camera", false, self.options.camera, |o| o.camera = !o.camera))
+                    .child(item("keys", "Keyboard Shortcuts", false, self.options.keys, |o| o.keys = !o.keys)),
             )
             .into_any_element()
     }

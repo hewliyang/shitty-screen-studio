@@ -7,6 +7,7 @@ mod edit;
 mod editor;
 mod export;
 mod gpu;
+mod keys;
 mod tray;
 mod motion;
 mod player;
@@ -139,6 +140,7 @@ mod cli {
                 "--mic" => options.mic = true,
                 "--system-audio" => options.system_audio = true,
                 "--camera" => options.camera = true,
+                "--keys" => options.keys = true,
                 "--window" => options.source = Source::Window(it.next().context("window id")?.parse()?),
                 "--area" => {
                     let v: Vec<f64> = it.next().context("area")?.split(',').map(|s| s.parse()).collect::<Result<_, _>>()?;
@@ -214,7 +216,7 @@ mod cli {
         if what == "bench" {
             let motion = Motion::build(&rec.cursor, &zooms, rec.duration, &style);
             let clicks = rec.clicks();
-            let params = Params { style: &style, motion: &motion, clicks: &clicks, src_w: rec.width, src_h: rec.height, points_width: rec.points_width };
+            let params = Params { style: &style, motion: &motion, clicks: &clicks, keys: &rec.keys, src_w: rec.width, src_h: rec.height, points_width: rec.points_width };
             let mut composer = Gpu::new()?;
             let mut frames = crate::gpu::Frames::open(&project.video())?;
             let (pw, ph) = crate::player::preview_size(&style, rec);
@@ -245,6 +247,7 @@ mod cli {
             style: &style,
             motion: &motion,
             clicks: &clicks,
+            keys: &rec.keys,
             src_w: rec.width,
             src_h: rec.height,
             points_width: rec.points_width,

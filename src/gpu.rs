@@ -39,6 +39,8 @@ struct U {
     float4 cam_misc; // edge width, shadow sigma, shadow offset, shadow alpha
     float4 sprite;   // origin, extent in cursor units
     float4 wallpaper; // has image, uv scale x, y
+    float4 keys;     // shortcut pill x, y, w, h in output px
+    float4 keys2;    // radius, alpha, shadow sigma, visible
     float4 views[16];
     float4 cursors[24];
     float4 ripples[8];
@@ -108,6 +110,7 @@ static float4 sample_area(texture2d<float> tex, sampler s, float2 uv, float2 duv
 fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]],
                    texture2d<float> src [[texture(0)]], texture2d<float> cam [[texture(1)]],
                    texture2d<float> cursor [[texture(2)]], texture2d<float> wall [[texture(3)]],
+                   texture2d<float> label [[texture(4)]],
                    sampler lin [[sampler(0)]], sampler mip [[sampler(1)]]) {
     float2 p = in.pos.xy;
     float z = u.view.x;
@@ -171,6 +174,17 @@ fragment float4 fs(VOut in [[stage_in]], constant U& u [[buffer(0)]],
         }
         col = mix(col, float3(1.0), clamp(0.5 - (abs(d) - u.cam_misc.x * 0.5), 0.0, 1.0) * 0.18);
     }
+
+    if (u.keys2.w > 0.0) {
+        float4 r = u.keys;
+        float a = u.keys2.y;
+        float2 lo = r.xy + float2(0.0, u.keys2.z * 0.5);
+        col *= 1.0 - 0.4 * a * rrect_shadow(lo, lo + r.zw, p, u.keys2.z, u.keys2.x);
+        col = mix(col, float3(0.0), clamp(0.5 - sd_rrect(p, r, u.keys2.x), 0.0, 1.0) * 0.86 * a);
+        float2 ts = float2(label.get_width(), label.get_height());
+        float2 tl = floor(r.xy + (r.zw - ts) * 0.5 + 0.5);
+        col = mix(col, float3(1.0), label.sample(lin, (p - tl) / ts).a * a);
+    }
     return float4(col, 1.0);
 }
 
@@ -208,6 +222,12 @@ const MAX_RIPPLES: usize = 8;
 const SPRITE_ORIGIN: (f32, f32) = (-3.0, -3.0);
 const SPRITE_EXTENT: f32 = 27.0;
 const SPRITE_SCALE: f32 = 16.0;
+/// Shortcut pill sizes, in pixels of a 1080p canvas.
+const KEY_FONT: f32 = 36.0;
+const KEY_HEIGHT: f32 = 72.0;
+const KEY_PAD: f32 = 24.0;
+const KEY_RADIUS: f32 = 18.0;
+const KEY_MARGIN: f32 = 48.0;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -224,6 +244,8 @@ struct Uniforms {
     cam_misc: [f32; 4],
     sprite: [f32; 4],
     wallpaper: [f32; 4],
+    keys: [f32; 4],
+    keys2: [f32; 4],
     views: [[f32; 4]; MAX_VIEWS],
     cursors: [[f32; 4]; MAX_CURSORS],
     ripples: [[f32; 4]; MAX_RIPPLES],
@@ -233,7 +255,9 @@ fn color(c: u32) -> [f32; 4] {
     [((c >> 16) & 255) as f32 / 255.0, ((c >> 8) & 255) as f32 / 255.0, (c & 255) as f32 / 255.0, 1.0]
 }
 
-fn uniforms(p: &Params, t: f64, w: u32, h: u32, cam: Option<(u32, u32)>, wall: Option<(u32, u32)>) -> Uniforms {
+/// `label` is the shortcut's alpha and the size of its text bitmap.
+#[allow(clippy::too_many_arguments)]
+fn uniforms(p: &Params, t: f64, w: u32, h: u32, cam: Option<(u32, u32)>, wall: Option<(u32, u32)>, label: Option<(f32, u32, u32)>) -> Uniforms {
     let st = p.style;
     let (wf, hf) = (w as f32, h as f32);
     let s = unit(w, h);
@@ -344,7 +368,26 @@ fn uniforms(p: &Params, t: f64, w: u32, h: u32, cam: Option<(u32, u32)>, wall: O
             u.misc[1] = 1.0;
         }
     }
+
+    if let Some((alpha, tw, _)) = label {
+        let ph = KEY_HEIGHT * s;
+        let pw = (tw as f32 + 2.0 * KEY_PAD * s).max(ph);
+        let margin = KEY_MARGIN * s;
+        let x = match st.keys_position % 3 {
+            0 => margin,
+            1 => (wf - pw) / 2.0,
+            _ => wf - margin - pw,
+        };
+        let rise = (1.0 - alpha) * 10.0 * s;
+        let y = if st.keys_position >= 3 { hf - margin - ph + rise } else { margin - rise };
+        u.keys = [x, y, pw, ph];
+        u.keys2 = [KEY_RADIUS * s, alpha, 10.0 * s, 1.0];
+    }
     u
+}
+
+fn key_font_size(w: u32, h: u32) -> u32 {
+    (KEY_FONT * unit(w, h)).round().max(6.0) as u32
 }
 
 pub struct Gpu {
@@ -359,6 +402,8 @@ pub struct Gpu {
     target: Option<Texture>,
     nv12: Option<Nv12>,
     wallpaper: Option<(usize, Option<Texture>)>,
+    /// Text bitmap for the shortcut on screen, by label and font size.
+    label: Option<(String, u32, Texture)>,
 }
 
 struct Nv12 {
@@ -413,7 +458,7 @@ impl Gpu {
         }
         let cache = unsafe { CFRetained::from_raw(NonNull::new_unchecked(cache)) };
         let sprite = Self::make_sprite(&device, &queue)?;
-        Ok(Self { device, queue, pipeline, linear, mip, sprite, cache, uploads: [None, None], target: None, nv12: Some(nv12), wallpaper: None })
+        Ok(Self { device, queue, pipeline, linear, mip, sprite, cache, uploads: [None, None], target: None, nv12: Some(nv12), wallpaper: None, label: None })
     }
 
     fn make_sprite(device: &ProtocolObject<dyn MTLDevice>, queue: &ProtocolObject<dyn objc2_metal::MTLCommandQueue>) -> Result<Texture> {
@@ -435,6 +480,20 @@ impl Gpu {
             .map(|img| img.to_rgba8())
             .and_then(|img| mipmapped(&self.device, &self.queue, img.as_raw(), img.width(), img.height()).ok());
         self.wallpaper = Some((i, tex));
+    }
+
+    /// Draws the text for the shortcut shown at `t`, once per label and canvas size.
+    pub fn prepare_label(&mut self, p: &Params, t: f64, w: u32, h: u32) {
+        let Some(shown) = crate::keys::shown_at(p.keys, t).filter(|_| p.style.keys_visible) else { return };
+        let size = key_font_size(w, h);
+        if self.label.as_ref().is_some_and(|(l, s, _)| *l == shown.label && *s == size) {
+            return;
+        }
+        self.label = crate::keys::rasterize(&shown.label, size as f32).and_then(|b| {
+            let tex = self.texture(b.width, b.height, MTLPixelFormat::RGBA8Unorm, false).ok()?;
+            replace(&tex, &b.rgba, b.width, b.height);
+            Some((shown.label, size, tex))
+        });
     }
 }
 
@@ -494,7 +553,19 @@ impl Gpu {
     pub fn draw(&self, target: &ProtocolObject<dyn MTLTexture>, src: &ProtocolObject<dyn MTLTexture>, cam: Option<&ProtocolObject<dyn MTLTexture>>, t: f64, p: &Params) -> Result<CommandBuffer> {
         let (w, h) = (target.width() as u32, target.height() as u32);
         let wall = self.wallpaper.as_ref().and_then(|(_, t)| t.as_ref()).filter(|_| matches!(fill(p.style.background), Fill::Wallpaper(_)));
-        let u = uniforms(p, t, w, h, cam.map(|c| (c.width() as u32, c.height() as u32)), wall.map(|t| (t.width() as u32, t.height() as u32)));
+        let label = crate::keys::shown_at(p.keys, t).filter(|_| p.style.keys_visible).and_then(|shown| {
+            let (l, size, tex) = self.label.as_ref()?;
+            (*l == shown.label && *size == key_font_size(w, h)).then_some((shown.alpha, tex))
+        });
+        let u = uniforms(
+            p,
+            t,
+            w,
+            h,
+            cam.map(|c| (c.width() as u32, c.height() as u32)),
+            wall.map(|t| (t.width() as u32, t.height() as u32)),
+            label.map(|(a, tex)| (a, tex.width() as u32, tex.height() as u32)),
+        );
         let pass = MTLRenderPassDescriptor::new();
         let att = unsafe { pass.colorAttachments().objectAtIndexedSubscript(0) };
         att.setTexture(Some(target));
@@ -509,6 +580,7 @@ impl Gpu {
             enc.setFragmentTexture_atIndex(Some(cam.unwrap_or(src)), 1);
             enc.setFragmentTexture_atIndex(Some(&self.sprite), 2);
             enc.setFragmentTexture_atIndex(Some(wall.map_or(&*self.sprite, |t| &**t)), 3);
+            enc.setFragmentTexture_atIndex(Some(label.map_or(&*self.sprite, |(_, t)| &**t)), 4);
             enc.setFragmentSamplerState_atIndex(Some(&self.linear), 0);
             enc.setFragmentSamplerState_atIndex(Some(&self.mip), 1);
             enc.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::Triangle, 0, 3);
@@ -522,6 +594,7 @@ impl Gpu {
     #[allow(clippy::too_many_arguments)]
     pub fn render_bgra(&mut self, src: (&[u8], u32, u32), cam: Option<(&[u8], u32, u32)>, t: f64, p: &Params, w: u32, h: u32, out: &mut Vec<u8>) -> Result<()> {
         self.prepare(p);
+        self.prepare_label(p, t, w, h);
         let src = self.upload(0, src.0, src.1, src.2)?;
         let cam = match cam {
             Some((b, cw, ch)) if b.len() == (cw * ch * 4) as usize => Some(self.upload(1, b, cw, ch)?),
@@ -545,6 +618,7 @@ impl Gpu {
     /// Composes a frame from decoded pixel buffers into a fresh NV12 buffer that GPUI can show as a surface.
     pub fn present(&mut self, src: &CVPixelBuffer, cam: Option<&CVPixelBuffer>, t: f64, p: &Params, p3: bool, w: u32, h: u32) -> Result<CFRetained<CVPixelBuffer>> {
         self.prepare(p);
+        self.prepare_label(p, t, w, h);
         let src = self.wrap(src)?;
         let cam = cam.map(|c| self.wrap(c)).transpose()?;
         if !self.target.as_ref().is_some_and(|t| t.width() == w as usize && t.height() == h as usize) {

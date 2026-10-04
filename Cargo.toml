@@ -24,6 +24,7 @@ block2 = "0.6"
 dispatch2 = "0.3"
 objc2-foundation = { version = "=0.3.2", features = ["NSArray", "NSData", "NSDate", "NSDateFormatter", "NSDictionary", "NSFormatter", "NSError", "NSString", "NSProcessInfo", "NSURL", "NSValue"] }
 objc2-core-foundation = { version = "=0.3.2" }
+objc2-core-text = { version = "=0.3.2" }
 objc2-core-graphics = { version = "=0.3.2", features = ["CGColorSpace", "CGDirectDisplay", "CGDisplayStream", "CGEvent", "CGEventSource", "CGEventTypes", "CGRemoteOperation"] }
 objc2-core-media = { version = "=0.3.2", features = ["CMSampleBuffer", "CMSync", "CMTime", "CMTimeRange", "objc2-core-video"] }
 objc2-core-video = { version = "=0.3.2", features = ["CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn", "CVMetalTexture", "CVMetalTextureCache", "CVPixelBufferPool", "objc2-metal"] }

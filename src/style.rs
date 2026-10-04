@@ -139,6 +139,9 @@ pub struct Style {
     /// 0 top-left, 1 top-right, 2 bottom-left, 3 bottom-right.
     pub camera_corner: u8,
     pub camera_circle: bool,
+    pub keys_visible: bool,
+    /// 0 top-left, 1 top, 2 top-right, 3 bottom-left, 4 bottom, 5 bottom-right.
+    pub keys_position: u8,
 }
 
 impl Default for Style {
@@ -160,6 +163,8 @@ impl Default for Style {
             camera_size: 0.24,
             camera_corner: 3,
             camera_circle: false,
+            keys_visible: true,
+            keys_position: 4,
         }
     }
 }

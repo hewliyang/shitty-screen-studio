@@ -110,7 +110,7 @@ pub fn export(
     use objc2_metal::MTLCommandBuffer as _;
     let motion = Motion::build(&rec.cursor, zooms, rec.duration, style);
     let clicks = rec.clicks();
-    let params = Params { style, motion: &motion, clicks: &clicks, src_w: rec.width, src_h: rec.height, points_width: rec.points_width };
+    let params = Params { style, motion: &motion, clicks: &clicks, keys: &rec.keys, src_w: rec.width, src_h: rec.height, points_width: rec.points_width };
     let mut gpu = Gpu::new()?;
     gpu.prepare(&params);
     let mut screen = Seeker::new(project.video())?;
@@ -170,6 +170,7 @@ pub fn export(
             Some(b) => Some(gpu.wrap(b)?),
             None => None,
         };
+        gpu.prepare_label(&params, t, settings.width, settings.height);
         let buffer = pool_buffer(&pool)?;
         let target = gpu.wrap(&buffer)?;
         let commands = gpu.draw(&target.texture, &src.texture, cam.as_ref().map(|c| &*c.texture), t, &params)?;

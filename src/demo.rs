@@ -53,7 +53,7 @@ pub fn create(dir: &Path) -> Result<Project> {
     }
     let project = Project {
         dir: dir.to_path_buf(),
-        rec: Recording { width: w, height: h, fps, duration, points_width: 1440.0, cursor, zooms: None, style: None, color: Default::default(), camera: None, timeline: None },
+        rec: Recording { width: w, height: h, fps, duration, points_width: 1440.0, cursor, zooms: None, style: None, color: Default::default(), camera: None, timeline: None, keys: Vec::new() },
     };
     project.save()?;
     Ok(project)

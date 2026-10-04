@@ -2,7 +2,7 @@ use crate::compositor::Params;
 use crate::edit::Timeline;
 use crate::gpu::{Frames, Gpu};
 use crate::motion::Motion;
-use crate::project::{Click, Project, Recording};
+use crate::project::{Click, KeyPress, Project, Recording};
 use crate::style::Style;
 use objc2::MainThreadMarker;
 use objc2::rc::Retained;
@@ -33,6 +33,7 @@ pub struct Scene {
     pub style: Style,
     pub motion: Motion,
     pub clicks: Vec<Click>,
+    pub keys: Vec<KeyPress>,
     pub timeline: Timeline,
 }
 
@@ -276,6 +277,7 @@ fn run(video: PathBuf, camera: Option<PathBuf>, rec: Recording, mut scene: Arc<S
                 style: &scene.style,
                 motion: &scene.motion,
                 clicks: &scene.clicks,
+                keys: &scene.keys,
                 src_w: rec.width,
                 src_h: rec.height,
                 points_width: rec.points_width,

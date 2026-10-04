@@ -1,5 +1,5 @@
 use crate::motion::Motion;
-use crate::project::Click;
+use crate::project::{Click, KeyPress};
 use crate::style::{Style, unit};
 use tiny_skia::{Color, FillRule, LineCap, LineJoin, Paint, Path, PathBuilder, Pixmap, Rect, Stroke, Transform};
 
@@ -7,6 +7,7 @@ pub struct Params<'a> {
     pub style: &'a Style,
     pub motion: &'a Motion,
     pub clicks: &'a [Click],
+    pub keys: &'a [KeyPress],
     pub src_w: u32,
     pub src_h: u32,
     pub points_width: f32,
