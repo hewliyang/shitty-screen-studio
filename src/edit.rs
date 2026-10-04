@@ -32,6 +32,11 @@ impl Timeline {
         matches!(self.slices.as_slice(), [s] if s.start <= 1e-6 && s.end >= duration - 1e-6 && s.speed == 1.0)
     }
 
+    /// Source time of the last frame in the output.
+    pub fn source_end(&self, duration: f64) -> f64 {
+        self.slices.last().map_or(duration, |s| s.end.min(duration))
+    }
+
     pub fn duration(&self) -> f64 {
         self.slices.iter().map(Slice::len_out).sum()
     }

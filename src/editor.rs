@@ -120,7 +120,7 @@ impl Editor {
         let timeline = project.rec.timeline();
         let scene = Arc::new(Scene {
             style,
-            motion: Motion::build(&project.rec.cursor, &zooms, project.rec.duration, &style),
+            motion: Motion::build(&project.rec.cursor, &zooms, project.rec.duration, timeline.source_end(project.rec.duration), &style),
             clicks: clicks.clone(),
             keys: project.rec.keys.clone(),
             timeline: timeline.clone(),
@@ -224,7 +224,7 @@ impl Editor {
     fn refresh(&mut self) {
         let scene = Scene {
             style: self.style,
-            motion: Motion::build(&self.project.rec.cursor, &self.zooms, self.project.rec.duration, &self.style),
+            motion: Motion::build(&self.project.rec.cursor, &self.zooms, self.project.rec.duration, self.timeline.source_end(self.project.rec.duration), &self.style),
             clicks: self.clicks.clone(),
             keys: self.project.rec.keys.clone(),
             timeline: self.timeline.clone(),

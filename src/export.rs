@@ -108,7 +108,7 @@ pub fn export(
     cancel: &AtomicBool,
 ) -> Result<()> {
     use objc2_metal::MTLCommandBuffer as _;
-    let motion = Motion::build(&rec.cursor, zooms, rec.duration, style);
+    let motion = Motion::build(&rec.cursor, zooms, rec.duration, timeline.source_end(rec.duration), style);
     let clicks = rec.clicks();
     let params = Params { style, motion: &motion, clicks: &clicks, keys: &rec.keys, src_w: rec.width, src_h: rec.height, points_width: rec.points_width };
     let mut gpu = Gpu::new()?;

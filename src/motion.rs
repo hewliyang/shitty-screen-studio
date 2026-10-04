@@ -7,6 +7,8 @@ pub const STEP: f64 = 1.0 / 120.0;
 const DEAD_ZONE: f32 = 0.5;
 /// How much stiffer the pan gets while the cursor is at or past the view edge.
 const EDGE_BOOST: f32 = 2.5;
+/// Seconds the full view holds before the video ends.
+const END_HOLD: f64 = 0.15;
 
 /// Camera timing derived from one "camera speed" value in 0..1, where 0.5 is the default.
 #[derive(Clone, Copy)]
@@ -182,7 +184,8 @@ fn zoom_aim(samples: &[CursorSample], seg: &ZoomSegment, settle: f64) -> (f32, f
 }
 
 impl Motion {
-    pub fn build(samples: &[CursorSample], zooms: &[ZoomSegment], duration: f64, style: &Style) -> Self {
+    /// `end` is the source time where the video ends; the camera is fully zoomed out by then.
+    pub fn build(samples: &[CursorSample], zooms: &[ZoomSegment], duration: f64, end: f64, style: &Style) -> Self {
         let tune = Tuning::new(style.camera_speed);
         let smoothing = style.cursor_smoothing;
         let n = (duration / STEP).ceil() as usize + 2;
@@ -202,6 +205,7 @@ impl Motion {
         let mut target: Option<(f32, f32)> = None;
         let mut seg_size = 0.5f32;
         let mut landing = 0.0f64;
+        let release_by = end - tune.zoom_out as f64 - END_HOLD;
 
         let mut frames = Vec::with_capacity(n);
         for i in 0..n {
@@ -215,7 +219,7 @@ impl Motion {
                 cy.step(ry, dt);
             }
 
-            if let Some(seg) = zoom_at(zooms, t) {
+            if let Some(seg) = zoom_at(zooms, t).filter(|_| t < release_by) {
                 let zoom = seg.scale;
                 seg_size = 1.0 / zoom;
                 let half = 0.5 / zoom;
