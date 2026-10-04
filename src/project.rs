@@ -89,8 +89,9 @@ impl Recording {
         const LEAD: f64 = 0.4;
         const HOLD: f64 = 2.2;
         const MERGE_GAP: f64 = 0.8;
+        let timeline = self.timeline();
         let mut out: Vec<ZoomSegment> = Vec::new();
-        for c in self.clicks() {
+        for c in self.clicks().into_iter().filter(|c| timeline.contains_source(c.t)) {
             let start = (c.t - LEAD).max(0.0);
             let end = (c.t + HOLD).min(self.duration);
             match out.last_mut() {
@@ -100,6 +101,65 @@ impl Recording {
         }
         out
     }
+}
+
+/// When a recording ends with a click on our stop button, the time the cursor left its last
+/// resting spot to reach for it. Cutting there keeps the reach out of the video.
+pub fn stop_reach(cursor: &[CursorSample], duration: f64) -> Option<f64> {
+    const CLICK_TO_STOP: f64 = 0.4;
+    const MAX_REACH: f64 = 3.0;
+    const REST: f64 = 0.4;
+    const STILL: f32 = 0.004;
+    const AWAY: f32 = 0.03;
+    /// Going back in time, the cursor getting this much closer to the button means the reach had not begun yet.
+    const BACKTRACK: f32 = 0.02;
+    const PAD: f64 = 0.1;
+
+    let last_down = cursor.iter().rposition(|s| s.down)?;
+    if cursor[last_down].t < duration - CLICK_TO_STOP {
+        return None;
+    }
+    let press = cursor[..=last_down].iter().rposition(|s| !s.down).map_or(0, |i| i + 1);
+    let (px, py, pt) = (cursor[press].x, cursor[press].y, cursor[press].t);
+    let dist = |s: &CursorSample| (s.x - px).hypot(s.y - py);
+    let mut farthest = (0.0f32, press);
+    let mut release = None;
+    let mut first_pause = None;
+    let mut was_paused = false;
+    for j in (0..press).rev() {
+        let s = cursor[j];
+        if pt - s.t > MAX_REACH {
+            return None;
+        }
+        // The reach never spans an earlier click or drag: it begins at the first pause after it.
+        if s.down {
+            return reach_end(first_pause.or(release).unwrap_or(s.t) + PAD, pt);
+        }
+        release = Some(s.t);
+        let paused = (cursor[j + 1].x - s.x).abs().max((cursor[j + 1].y - s.y).abs()) < STILL && dist(&s) >= AWAY;
+        if paused && !was_paused {
+            first_pause = Some(s.t);
+        }
+        was_paused = paused;
+        let d = dist(&s);
+        if d > farthest.0 {
+            farthest = (d, j);
+        } else if farthest.0 - d > BACKTRACK {
+            return reach_end(cursor[farthest.1].t + PAD, pt);
+        }
+        if d < AWAY || s.t - cursor[0].t < REST {
+            continue;
+        }
+        let still = cursor[..=j].iter().rev().take_while(|r| s.t - r.t <= REST).all(|r| (r.x - s.x).abs().max((r.y - s.y).abs()) < STILL);
+        if still {
+            return reach_end(s.t + PAD, pt);
+        }
+    }
+    None
+}
+
+fn reach_end(end: f64, press: f64) -> Option<f64> {
+    (end < press).then_some(end)
 }
 
 #[derive(Clone)]
@@ -177,4 +237,73 @@ pub fn list_recordings() -> Vec<PathBuf> {
     dirs.sort();
     dirs.reverse();
     dirs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Rests at (0.3, 0.3), reaches for a button at (0.5, 1.1) from `move_at`, and clicks it near the end.
+    fn session(move_at: f64, click_at: f64, duration: f64) -> Vec<CursorSample> {
+        let mut out = Vec::new();
+        let mut t = 0.0;
+        while t <= duration {
+            let k = ((t - move_at) / (click_at - 0.1 - move_at)).clamp(0.0, 1.0) as f32;
+            let down = t >= click_at && t < click_at + 0.08;
+            out.push(CursorSample { t, x: 0.3 + 0.2 * k, y: 0.3 + 0.8 * k, down });
+            t += 0.008;
+        }
+        out
+    }
+
+    #[test]
+    fn cuts_the_reach_for_the_stop_button() {
+        let end = stop_reach(&session(4.0, 5.0, 5.1), 5.1).unwrap();
+        assert!((4.0..4.2).contains(&end), "{end}");
+    }
+
+    #[test]
+    fn skips_a_pause_halfway_through_the_reach() {
+        let mut cursor = session(4.0, 5.0, 5.1);
+        let mid = cursor.iter().position(|s| s.t >= 4.4).unwrap();
+        let held = cursor[mid];
+        cursor.iter_mut().filter(|s| (4.4..4.65).contains(&s.t)).for_each(|s| (s.x, s.y) = (held.x, held.y));
+        let end = stop_reach(&cursor, 5.1).unwrap();
+        assert!((4.0..4.2).contains(&end), "{end}");
+    }
+
+    #[test]
+    fn cuts_where_the_cursor_turned_toward_the_button() {
+        let mut cursor = session(4.0, 5.0, 5.1);
+        for s in cursor.iter_mut().filter(|s| s.t < 4.0) {
+            s.y = 0.3 + 0.2 * ((4.0 - s.t) / 4.0) as f32;
+        }
+        let end = stop_reach(&cursor, 5.1).unwrap();
+        assert!((4.0..4.2).contains(&end), "{end}");
+    }
+
+    #[test]
+    fn keeps_an_earlier_drag() {
+        let mut cursor = session(4.0, 5.0, 5.1);
+        cursor.iter_mut().filter(|s| (3.0..3.95).contains(&s.t)).for_each(|s| s.down = true);
+        let end = stop_reach(&cursor, 5.1).unwrap();
+        assert!((3.95..4.2).contains(&end), "{end}");
+    }
+
+    #[test]
+    fn keeps_recordings_stopped_without_a_click() {
+        let mut cursor = session(4.0, 5.0, 5.1);
+        cursor.iter_mut().for_each(|s| s.down = false);
+        assert_eq!(stop_reach(&cursor, 5.1), None);
+    }
+
+    #[test]
+    fn keeps_a_real_click_long_before_the_stop() {
+        assert_eq!(stop_reach(&session(4.0, 5.0, 6.0), 6.0), None);
+    }
+
+    #[test]
+    fn keeps_a_reach_with_no_rest_before_it() {
+        assert_eq!(stop_reach(&session(0.0, 5.0, 5.1), 5.1), None);
+    }
 }

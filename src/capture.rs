@@ -738,8 +738,10 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
     let keys: Vec<KeyPress> = keys
         .into_iter()
         .map(|k| KeyPress { t: k.t - start, ..k })
-        .filter(|k| (0.0..=duration).contains(&k.t))
+        .filter(|k| (0.0..=duration).contains(&k.t) && !crate::tray::is_stop_shortcut(&k.keys))
         .collect();
+    let timeline = crate::project::stop_reach(&cursor, duration)
+        .map(|end| crate::edit::Timeline { slices: vec![crate::edit::Slice { start: 0.0, end, speed: 1.0 }] });
 
     let project = Project {
         dir: dir.to_path_buf(),
@@ -754,7 +756,7 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
             style: None,
             color: ColorSpace::DisplayP3,
             camera,
-            timeline: None,
+            timeline,
             keys,
         },
     };

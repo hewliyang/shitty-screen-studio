@@ -457,7 +457,7 @@ impl Studio {
                             .on_click(cx.listener(|this, _, window, cx| this.start_recording(window, cx))),
                     )
                     .child(
-                        small("Records at up to 120 fps. The app hides itself from the capture. Use the floating bar or the menu bar to stop.")
+                        small(format!("Records at up to 120 fps. The app hides itself from the capture. Press {} to stop, or use the floating bar or the menu bar.", crate::tray::STOP_SHORTCUT))
                             .text_color(rgb(TERTIARY))
                             .px(px(2.)),
                     ),
