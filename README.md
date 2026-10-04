@@ -16,6 +16,14 @@ xattr -cr "/Applications/Shitty Screen Studio.app"
 
 Requires macOS 13 or later on Apple silicon.
 
+### Permission loop after an update
+
+Release builds are signed ad-hoc, so macOS treats each new version as a different app. If the app keeps asking for Screen Recording but System Settings shows it as allowed, quit the app, reset its permissions, and grant them again:
+
+```sh
+tccutil reset All dev.shitty.screenstudio
+```
+
 ## Build from source
 
 Requires Rust (stable) and Xcode command line tools.
