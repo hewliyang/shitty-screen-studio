@@ -202,7 +202,7 @@ mod cli {
             return Ok(());
         }
         if what == "motion" {
-            let motion = Motion::build(&rec.cursor, &zooms, rec.duration, style.cursor_smoothing);
+            let motion = Motion::build(&rec.cursor, &zooms, rec.duration, &style);
             let mut t = 0.0;
             while t <= rec.duration {
                 let f = motion.at(t);
@@ -212,7 +212,7 @@ mod cli {
             return Ok(());
         }
         if what == "bench" {
-            let motion = Motion::build(&rec.cursor, &zooms, rec.duration, style.cursor_smoothing);
+            let motion = Motion::build(&rec.cursor, &zooms, rec.duration, &style);
             let clicks = rec.clicks();
             let params = Params { style: &style, motion: &motion, clicks: &clicks, src_w: rec.width, src_h: rec.height, points_width: rec.points_width };
             let mut composer = Gpu::new()?;
@@ -234,7 +234,7 @@ mod cli {
             return Ok(());
         }
         let t: f64 = what.parse()?;
-        let motion = Motion::build(&rec.cursor, &zooms, rec.duration, style.cursor_smoothing);
+        let motion = Motion::build(&rec.cursor, &zooms, rec.duration, &style);
         let clicks = rec.clicks();
         let (sw, sh) = fit_even(rec.width, rec.height, 3840);
         let mut reader = FrameReader::open(&project.video(), t, 60, sw, sh)?;

@@ -28,6 +28,7 @@ enum Knob {
     CursorSize,
     Smoothing,
     MotionBlur,
+    CameraSpeed,
     CameraSize,
 }
 
@@ -41,6 +42,7 @@ impl Knob {
             Knob::CursorSize => "Cursor size",
             Knob::Smoothing => "Cursor smoothing",
             Knob::MotionBlur => "Motion blur",
+            Knob::CameraSpeed => "Camera speed",
             Knob::CameraSize => "Size",
         }
     }
@@ -52,7 +54,7 @@ impl Knob {
             Knob::Shadow => (0.0, 1.0),
             Knob::Zoom => (1.1, 4.0),
             Knob::CursorSize => (0.5, 4.0),
-            Knob::Smoothing | Knob::MotionBlur => (0.0, 1.0),
+            Knob::Smoothing | Knob::MotionBlur | Knob::CameraSpeed => (0.0, 1.0),
             Knob::CameraSize => (0.1, 0.5),
         }
     }
@@ -61,6 +63,13 @@ impl Knob {
         match self {
             Knob::Padding | Knob::Radius => format!("{v:.0}px"),
             Knob::Shadow | Knob::Smoothing | Knob::MotionBlur | Knob::CameraSize => format!("{:.0}%", v * 100.0),
+            Knob::CameraSpeed => match v {
+                v if v < 0.2 => "Slow".into(),
+                v if v < 0.4 => "Relaxed".into(),
+                v if v <= 0.6 => "Default".into(),
+                v if v <= 0.8 => "Snappy".into(),
+                _ => "Fast".into(),
+            },
             Knob::Zoom | Knob::CursorSize => format!("{v:.1}×"),
         }
     }
@@ -111,7 +120,7 @@ impl Editor {
         let timeline = project.rec.timeline();
         let scene = Arc::new(Scene {
             style,
-            motion: Motion::build(&project.rec.cursor, &zooms, project.rec.duration, style.cursor_smoothing),
+            motion: Motion::build(&project.rec.cursor, &zooms, project.rec.duration, &style),
             clicks: clicks.clone(),
             timeline: timeline.clone(),
         });
@@ -214,7 +223,7 @@ impl Editor {
     fn refresh(&mut self) {
         let scene = Scene {
             style: self.style,
-            motion: Motion::build(&self.project.rec.cursor, &self.zooms, self.project.rec.duration, self.style.cursor_smoothing),
+            motion: Motion::build(&self.project.rec.cursor, &self.zooms, self.project.rec.duration, &self.style),
             clicks: self.clicks.clone(),
             timeline: self.timeline.clone(),
         };
@@ -320,6 +329,7 @@ impl Editor {
             Knob::CursorSize => self.style.cursor_size,
             Knob::Smoothing => self.style.cursor_smoothing,
             Knob::MotionBlur => self.style.motion_blur,
+            Knob::CameraSpeed => self.style.camera_speed,
             Knob::CameraSize => self.style.camera_size,
         }
     }
@@ -346,6 +356,7 @@ impl Editor {
             Knob::CursorSize => self.style.cursor_size = (v * 10.0).round() / 10.0,
             Knob::Smoothing => self.style.cursor_smoothing = v,
             Knob::MotionBlur => self.style.motion_blur = v,
+            Knob::CameraSpeed => self.style.camera_speed = (v * 20.0).round() / 20.0,
             Knob::CameraSize => self.style.camera_size = (v * 100.0).round() / 100.0,
         }
         self.refresh();
@@ -846,6 +857,7 @@ impl Editor {
             .child(
                 section("Zoom")
                     .child(self.render_slider(Knob::Zoom, cx))
+                    .child(self.render_slider(Knob::CameraSpeed, cx))
                     .child(self.render_slider(Knob::MotionBlur, cx))
                     .child(small(zoom_hint))
                     .child(

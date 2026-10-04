@@ -1,16 +1,35 @@
 use crate::project::{CursorSample, ZoomSegment};
+use crate::style::Style;
 
 pub const STEP: f64 = 1.0 / 120.0;
 
-const ZOOM_IN_SECS: f32 = 0.8;
-const ZOOM_OUT_SECS: f32 = 1.0;
-const PAN_OMEGA: f32 = 11.0;
 /// Fraction of the zoomed view the cursor can roam before the camera re-centres.
 const DEAD_ZONE: f32 = 0.5;
-/// Re-centring aims where the cursor will be, so one long move becomes one glide.
-const LOOKAHEAD: f64 = 0.3;
 /// Last-resort margin: the cursor never gets closer than this fraction of the half view to the edge.
 const EDGE_MARGIN: f32 = 0.05;
+
+/// Camera timing derived from one "camera speed" value in 0..1, where 0.5 is the default.
+#[derive(Clone, Copy)]
+struct Tuning {
+    zoom_in: f32,
+    zoom_out: f32,
+    pan_omega: f32,
+    /// Re-centring aims where the cursor will be, so one long move becomes one glide.
+    lookahead: f64,
+}
+
+impl Tuning {
+    fn new(speed: f32) -> Self {
+        let s = speed.clamp(0.0, 1.0);
+        let pick = |slow: f32, mid: f32, fast: f32| if s < 0.5 { slow + (mid - slow) * s * 2.0 } else { mid + (fast - mid) * (s - 0.5) * 2.0 };
+        Self {
+            zoom_in: pick(1.2, 0.8, 0.5),
+            zoom_out: pick(1.5, 1.0, 0.6),
+            pan_omega: pick(7.0, 11.0, 16.0),
+            lookahead: pick(0.4, 0.3, 0.2) as f64,
+        }
+    }
+}
 
 /// Two chained springs: the pan starts with zero acceleration, so a re-centre never kicks.
 #[derive(Clone, Copy)]
@@ -20,8 +39,8 @@ struct Pan {
 }
 
 impl Pan {
-    fn new(pos: f32) -> Self {
-        Self { goal: Spring::new(pos, PAN_OMEGA), pos: Spring::new(pos, PAN_OMEGA) }
+    fn new(pos: f32, omega: f32) -> Self {
+        Self { goal: Spring::new(pos, omega), pos: Spring::new(pos, omega) }
     }
 
     fn step(&mut self, target: f32, dt: f32) {
@@ -152,7 +171,9 @@ fn zoom_at(zooms: &[ZoomSegment], t: f64) -> Option<f32> {
 }
 
 impl Motion {
-    pub fn build(samples: &[CursorSample], zooms: &[ZoomSegment], duration: f64, smoothing: f32) -> Self {
+    pub fn build(samples: &[CursorSample], zooms: &[ZoomSegment], duration: f64, style: &Style) -> Self {
+        let tune = Tuning::new(style.camera_speed);
+        let smoothing = style.cursor_smoothing;
         let n = (duration / STEP).ceil() as usize + 2;
         let dt = STEP as f32;
         let (x0, y0) = raw_cursor(samples, 0.0);
@@ -165,8 +186,8 @@ impl Motion {
         // into its focus point instead of swinging.
         let mut log_size = Ease::new(0.0);
         let mut size = 1.0f32;
-        let mut pan_x = Pan::new(0.5);
-        let mut pan_y = Pan::new(0.5);
+        let mut pan_x = Pan::new(0.5, tune.pan_omega);
+        let mut pan_y = Pan::new(0.5, tune.pan_omega);
         let mut target: Option<(f32, f32)> = None;
         let mut seg_size = 0.5f32;
 
@@ -185,15 +206,15 @@ impl Motion {
             let zoom = zoom_at(zooms, t).unwrap_or(1.0);
             if zoom > 1.0 {
                 seg_size = 1.0 / zoom;
-                let focus = follow(target, (rx, ry), raw_cursor(samples, t + LOOKAHEAD), zoom);
+                let focus = follow(target, (rx, ry), raw_cursor(samples, t + tune.lookahead), zoom);
                 if target.is_none() && size > 0.98 {
-                    pan_x = Pan::new(focus.0);
-                    pan_y = Pan::new(focus.1);
+                    pan_x = Pan::new(focus.0, tune.pan_omega);
+                    pan_y = Pan::new(focus.1, tune.pan_omega);
                 }
                 target = Some(focus);
                 pan_x.step(focus.0, dt);
                 pan_y.step(focus.1, dt);
-                log_size.retarget(seg_size.ln(), ZOOM_IN_SECS);
+                log_size.retarget(seg_size.ln(), tune.zoom_in);
                 size = log_size.step(dt).exp();
                 if size < 0.98 {
                     let half = size / 2.0;
@@ -202,7 +223,7 @@ impl Motion {
                 }
             } else {
                 target = None;
-                log_size.retarget(0.0, ZOOM_OUT_SECS);
+                log_size.retarget(0.0, tune.zoom_out);
                 size = log_size.step(dt).exp();
             }
 

@@ -131,6 +131,8 @@ pub struct Style {
     pub cursor_smoothing: f32,
     pub click_ripple: bool,
     pub motion_blur: f32,
+    /// 0 slow, 0.5 default, 1 fast; drives zoom and pan timing together.
+    pub camera_speed: f32,
     pub camera_visible: bool,
     /// Bubble side as a fraction of canvas height.
     pub camera_size: f32,
@@ -153,6 +155,7 @@ impl Default for Style {
             cursor_smoothing: 0.6,
             click_ripple: true,
             motion_blur: 0.5,
+            camera_speed: 0.5,
             camera_visible: true,
             camera_size: 0.24,
             camera_corner: 3,
