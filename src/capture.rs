@@ -198,7 +198,7 @@ pub fn dict(entries: &[(&NSString, &AnyObject)]) -> Retained<NSDictionary<NSStri
     NSDictionary::from_slices(&keys, &values)
 }
 
-fn ns_error(e: Option<Retained<NSError>>) -> String {
+pub fn ns_error(e: Option<Retained<NSError>>) -> String {
     e.map(|e| e.localizedDescription().to_string()).unwrap_or_default()
 }
 
@@ -241,10 +241,14 @@ fn audio_settings(channels: i64) -> Retained<NSDictionary<NSString, AnyObject>> 
 }
 
 pub fn new_writer(path: &Path) -> Result<Retained<AVAssetWriter>> {
+    new_writer_as(path, unsafe { AVFileTypeMPEG4.unwrap() })
+}
+
+pub fn new_writer_as(path: &Path, file_type: &NSString) -> Result<Retained<AVAssetWriter>> {
     let _ = std::fs::remove_file(path);
     unsafe {
         let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
-        AVAssetWriter::assetWriterWithURL_fileType_error(&url, AVFileTypeMPEG4.unwrap())
+        AVAssetWriter::assetWriterWithURL_fileType_error(&url, file_type)
             .map_err(|e| anyhow!("create writer: {}", e.localizedDescription()))
     }
 }

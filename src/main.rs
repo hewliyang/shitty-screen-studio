@@ -171,7 +171,7 @@ mod cli {
         }
     }
 
-    /// `--render <dir> <t> <out.png>` renders one frame, `--render <dir> export <out.mp4>` exports.
+    /// `--render <dir> <t> <out.png>` renders one frame, `--render <dir> export <out.mp4> [fps]` exports.
     pub fn render(args: &[String]) -> Result<()> {
         let dir = Path::new(args.first().context("missing dir")?);
         let what = args.get(1).context("missing time")?;
@@ -195,7 +195,7 @@ mod cli {
                 out,
                 &{
                     let (width, height) = crate::style::canvas_size(style.aspect, rec.width, rec.height, 1080);
-                    ExportSettings { width, height, fps: 60 }
+                    ExportSettings { width, height, fps: args.get(3).map(|s| s.parse()).transpose()?.unwrap_or(60) }
                 },
                 &AtomicU32::new(0),
                 &AtomicBool::new(false),

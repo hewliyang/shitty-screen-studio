@@ -490,8 +490,9 @@ impl Editor {
         }
         let dir = dirs::desktop_dir().or_else(dirs::home_dir).unwrap_or_default();
         let name = format!(
-            "{}.mp4",
-            self.project.dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or("recording".into())
+            "{}.{}",
+            self.project.dir.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or("recording".into()),
+            crate::export::file_extension(self.export_fps)
         );
         let rx = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn(async move |this, cx| {
