@@ -1,4 +1,5 @@
 mod app;
+mod audio;
 mod camera;
 mod capture;
 mod compositor;

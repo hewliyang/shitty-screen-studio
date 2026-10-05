@@ -38,7 +38,6 @@ const MAX_WIDTH: usize = 3840;
 const HEARTBEAT: f64 = 0.25;
 const BITRATE: i64 = 40_000_000;
 const NV12: u32 = u32::from_be_bytes(*b"420v");
-const AAC: i64 = u32::from_be_bytes(*b"aac ") as i64;
 const SAMPLE_RATE: i64 = 48_000;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -232,14 +231,6 @@ pub fn video_settings(width: usize, height: usize, codec: &NSString, bitrate: i6
     }
 }
 
-fn audio_settings(channels: i64) -> Retained<NSDictionary<NSString, AnyObject>> {
-    let key = NSString::from_str;
-    let (format, rate, chans, bitrate) =
-        (NSNumber::new_i64(AAC), NSNumber::new_i64(SAMPLE_RATE), NSNumber::new_i64(channels), NSNumber::new_i64(64_000 * channels));
-    let (k1, k2, k3, k4) = (key("AVFormatIDKey"), key("AVSampleRateKey"), key("AVNumberOfChannelsKey"), key("AVEncoderBitRateKey"));
-    dict(&[(&k1, format.as_ref()), (&k2, rate.as_ref()), (&k3, chans.as_ref()), (&k4, bitrate.as_ref())])
-}
-
 pub fn new_writer(path: &Path) -> Result<Retained<AVAssetWriter>> {
     new_writer_as(path, unsafe { AVFileTypeMPEG4.unwrap() })
 }
@@ -306,8 +297,8 @@ impl Writer {
             unsafe { AVMediaTypeVideo.unwrap() },
             &video_settings(width, height, unsafe { AVVideoCodecTypeHEVC.unwrap() }, BITRATE, MAX_FPS as i64, true),
         )?;
-        let system = system_audio.then(|| add_input(&writer, unsafe { AVMediaTypeAudio.unwrap() }, &audio_settings(2))).transpose()?;
-        let mic = mic.then(|| add_input(&writer, unsafe { AVMediaTypeAudio.unwrap() }, &audio_settings(1))).transpose()?;
+        let system = system_audio.then(|| add_input(&writer, unsafe { AVMediaTypeAudio.unwrap() }, &crate::audio::aac_settings(2, 128_000))).transpose()?;
+        let mic = mic.then(|| add_input(&writer, unsafe { AVMediaTypeAudio.unwrap() }, &crate::audio::aac_settings(1, 64_000))).transpose()?;
         let adaptor = unsafe {
             AVAssetWriterInputPixelBufferAdaptor::assetWriterInputPixelBufferAdaptorWithAssetWriterInput_sourcePixelBufferAttributes(&video, None)
         };
@@ -557,41 +548,6 @@ fn target(content: &SCShareableContent, source: Source) -> Result<Target> {
     }
 }
 
-fn audio_streams(video: &Path) -> usize {
-    let probe = std::process::Command::new(crate::video::ffprobe_path())
-        .args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0"])
-        .arg(video)
-        .output();
-    probe.map(|o| String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count()).unwrap_or(0)
-}
-
-/// Mixes the audio tracks that actually got samples into one AAC file aligned to the first video frame.
-fn mix_audio(video: &Path, out: &Path) -> Result<()> {
-    let tracks = audio_streams(video);
-    if tracks == 0 {
-        bail!("no audio was captured");
-    }
-    let mut graph = String::new();
-    for i in 0..tracks {
-        graph += &format!("[0:a:{i}]aresample=async=1:first_pts=0[a{i}];");
-    }
-    for i in 0..tracks {
-        graph += &format!("[a{i}]");
-    }
-    graph += &format!("amix=inputs={tracks}:normalize=0:duration=longest[a]");
-    let output = crate::video::ffmpeg()
-        .args(["-y", "-i"])
-        .arg(video)
-        .args(["-filter_complex", &graph, "-map", "[a]", "-c:a", "aac", "-b:a", "192k"])
-        .arg(out)
-        .output()?;
-    if !output.status.success() {
-        let _ = std::fs::remove_file(out);
-        bail!("mixing audio failed: {}", String::from_utf8_lossy(&output.stderr).trim());
-    }
-    Ok(())
-}
-
 fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mutex<RecState>) -> Result<()> {
     if options.mic {
         crate::camera::ensure_access(true)?;
@@ -723,7 +679,7 @@ fn record(dir: &Path, options: RecordOptions, stop: &Arc<AtomicBool>, state: &Mu
 
     // Audio problems must not cost the user the video.
     if options.system_audio || options.mic {
-        if let Err(e) = mix_audio(&Project::video_path(dir), &Project::audio_path(dir)) {
+        if let Err(e) = crate::audio::mix(&Project::video_path(dir), &Project::audio_path(dir)) {
             eprintln!("audio: {e:#}");
         }
     }

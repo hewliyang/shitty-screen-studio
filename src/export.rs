@@ -1,16 +1,16 @@
-use crate::capture::{dict, finish_writer, new_writer_as, ns_error};
+use crate::capture::{dict, finish_writer, new_writer_as};
 use crate::compositor::Params;
 use crate::gpu::{Frames, Gpu, Wrapped, pixel_buffer_attributes};
 use crate::motion::Motion;
 use crate::edit::Timeline;
 use crate::project::{ColorSpace, Project, Recording, ZoomSegment};
 use crate::style::Style;
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
 use objc2_av_foundation::{
-    AVAssetReader, AVAssetReaderTrackOutput, AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor, AVFileTypeMPEG4,
-    AVFileTypeQuickTimeMovie, AVMediaTypeAudio, AVMediaTypeVideo, AVURLAsset, AVVideoAverageBitRateKey, AVVideoCodecKey,
+    AVAssetWriter, AVAssetWriterInput, AVAssetWriterInputPixelBufferAdaptor, AVFileTypeMPEG4,
+    AVFileTypeQuickTimeMovie, AVMediaTypeAudio, AVMediaTypeVideo, AVVideoAverageBitRateKey, AVVideoCodecKey,
     AVVideoCodecTypeH264, AVVideoCodecTypeHEVC, AVVideoColorPrimariesKey, AVVideoColorPrimaries_ITU_R_709_2,
     AVVideoColorPrimaries_P3_D65, AVVideoColorPropertiesKey, AVVideoCompressionPropertiesKey,
     AVMetadataIdentifierQuickTimeMetadataFullFrameRatePlaybackIntent, AVMutableMetadataItem, AVVideoExpectedSourceFrameRateKey, AVVideoHeightKey, AVVideoMaxKeyFrameIntervalDurationKey,
@@ -20,9 +20,9 @@ use objc2_av_foundation::{
 use objc2_core_foundation::CFRetained;
 use objc2_core_media::{CMSampleBuffer, CMTime};
 use objc2_core_video::{CVPixelBuffer, CVPixelBufferPool, kCVReturnSuccess};
-use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString, NSURL};
+use objc2_foundation::{NSArray, NSDictionary, NSNumber, NSString};
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -162,7 +162,7 @@ pub fn export(
         input
     };
     let mut audio = match project.audio() {
-        Some(path) => Some(AudioFeed::open(&path, timeline, rec.duration, out, &writer)?),
+        Some(path) => Some(AudioFeed::open(&path, timeline, &writer)?),
         None => None,
     };
     let attrs = pixel_buffer_attributes(Some((settings.width, settings.height)));
@@ -253,47 +253,33 @@ impl Seeker {
     }
 }
 
-/// Passes AAC samples straight into the export writer, interleaved with the video.
+/// Feeds the audio into the export writer, interleaved with the video.
 struct AudioFeed {
-    _reader: Retained<AVAssetReader>,
-    output: Retained<AVAssetReaderTrackOutput>,
+    _reader: Retained<objc2_av_foundation::AVAssetReader>,
+    output: Retained<objc2_av_foundation::AVAssetReaderOutput>,
     input: Retained<AVAssetWriterInput>,
     next: Option<Retained<CMSampleBuffer>>,
     finished: bool,
-    temp: Option<PathBuf>,
 }
 
 impl AudioFeed {
-    /// Uses the recorded audio as is when nothing was cut; otherwise renders the edited audio to a temp file first.
-    fn open(audio: &Path, timeline: &Timeline, duration: f64, out: &Path, writer: &AVAssetWriter) -> Result<Self> {
-        let temp = (!timeline.is_identity(duration)).then(|| out.with_extension("audio.m4a"));
-        if let Some(temp) = &temp {
-            edit_audio(audio, timeline, temp)?;
-        }
-        let path = temp.as_deref().unwrap_or(audio);
-        let mut feed = unsafe {
-            let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
-            let asset = AVURLAsset::URLAssetWithURL_options(&url, None);
-            #[allow(deprecated)]
-            let track = asset.tracksWithMediaType(AVMediaTypeAudio.unwrap()).firstObject().context("no audio track")?;
-            let output = AVAssetReaderTrackOutput::assetReaderTrackOutputWithTrack_outputSettings(&track, None);
-            let reader = AVAssetReader::assetReaderWithAsset_error(&asset).map_err(|e| anyhow!("audio reader: {}", e.localizedDescription()))?;
-            reader.addOutput(&output);
-            if !reader.startReading() {
-                bail!("read audio: {}", ns_error(reader.error()));
-            }
-            let next = output.copyNextSampleBuffer();
+    fn open(audio: &Path, timeline: &Timeline, writer: &AVAssetWriter) -> Result<Self> {
+        let source = crate::audio::edited(audio, timeline)?;
+        unsafe {
+            let next = source.output.copyNextSampleBuffer();
             let hint = next.as_ref().and_then(|s| s.format_description());
-            let input = AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings_sourceFormatHint(AVMediaTypeAudio.unwrap(), None, hint.as_deref());
+            let input = AVAssetWriterInput::assetWriterInputWithMediaType_outputSettings_sourceFormatHint(
+                AVMediaTypeAudio.unwrap(),
+                Some(&source.settings),
+                hint.as_deref(),
+            );
             input.setExpectsMediaDataInRealTime(false);
             if !writer.canAddInput(&input) {
                 bail!("the writer does not take the audio track");
             }
             writer.addInput(&input);
-            Self { _reader: reader, output, input, next, finished: false, temp: None }
-        };
-        feed.temp = temp;
-        Ok(feed)
+            Ok(Self { _reader: source.reader, output: source.output, input, next, finished: false })
+        }
     }
 
     /// Appends samples that start before `until` seconds, as far as the writer takes them.
@@ -330,51 +316,6 @@ impl AudioFeed {
         }
         Ok(())
     }
-}
-
-impl Drop for AudioFeed {
-    fn drop(&mut self) {
-        if let Some(temp) = &self.temp {
-            let _ = std::fs::remove_file(temp);
-        }
-    }
-}
-
-/// Trims, retimes and joins the audio to match the slices.
-fn edit_audio(audio: &Path, timeline: &Timeline, out: &Path) -> Result<()> {
-    let mut graph = String::new();
-    for (i, s) in timeline.slices.iter().enumerate() {
-        graph += &format!("[0:a]atrim=start={:.6}:end={:.6},asetpts=PTS-STARTPTS", s.start, s.end);
-        let mut k = s.speed;
-        while k > 2.0 + 1e-9 {
-            graph += ",atempo=2.0";
-            k /= 2.0;
-        }
-        while k < 0.5 - 1e-9 {
-            graph += ",atempo=0.5";
-            k /= 0.5;
-        }
-        if (k - 1.0).abs() > 1e-9 {
-            graph += &format!(",atempo={k:.6}");
-        }
-        graph += &format!("[a{i}];");
-    }
-    for i in 0..timeline.slices.len() {
-        graph += &format!("[a{i}]");
-    }
-    graph += &format!("concat=n={}:v=0:a=1[a]", timeline.slices.len());
-    let output = crate::video::ffmpeg()
-        .args(["-y", "-i"])
-        .arg(audio)
-        .args(["-filter_complex", &graph, "-map", "[a]", "-c:a", "aac", "-b:a", "192k"])
-        .arg(out)
-        .output()
-        .map_err(|e| anyhow!("edit audio: {e}"))?;
-    if !output.status.success() {
-        let _ = std::fs::remove_file(out);
-        bail!("edit audio: {}", String::from_utf8_lossy(&output.stderr).trim());
-    }
-    Ok(())
 }
 
 pub struct ExportJob {

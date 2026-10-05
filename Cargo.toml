@@ -33,7 +33,7 @@ objc2-app-kit = { version = "=0.3.2" }
 raw-window-handle = "0.6"
 core-video = "0.5.2"
 core-foundation = "0.10"
-objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-video", "AVAssetWriter", "AVAssetWriterInput", "AVMetadataItem", "AVMetadataIdentifiers", "AVAsset", "AVAssetTrack", "AVAssetReader", "AVAssetReaderOutput", "AVMediaFormat", "AVVideoSettings", "AVCaptureDevice", "AVCaptureInput", "AVCaptureOutputBase", "AVCaptureSession", "AVCaptureSessionPreset", "AVCaptureVideoDataOutput", "AVPlayer"] }
+objc2-av-foundation = { version = "=0.3.2", default-features = false, features = ["std", "block2", "dispatch2", "objc2-core-media", "objc2-core-video", "AVAssetWriter", "AVAssetWriterInput", "AVMetadataItem", "AVMetadataIdentifiers", "AVAsset", "AVAssetTrack", "AVComposition", "AVCompositionTrack", "AVAssetReader", "AVAssetReaderOutput", "AVMediaFormat", "AVVideoSettings", "AVCaptureDevice", "AVCaptureInput", "AVCaptureOutputBase", "AVCaptureSession", "AVCaptureSessionPreset", "AVCaptureVideoDataOutput", "AVPlayer"] }
 objc2-screen-capture-kit = { version = "=0.3.2", features = ["block2", "dispatch2", "objc2-core-graphics", "objc2-core-media", "SCShareableContent", "SCStream", "SCError", "std"] }
 
 [patch.crates-io]

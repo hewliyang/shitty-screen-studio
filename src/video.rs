@@ -11,10 +11,6 @@ fn tool(name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
-pub fn ffprobe_path() -> String {
-    tool("ffprobe")
-}
-
 pub fn ffmpeg() -> Command {
     let mut cmd = Command::new(tool("ffmpeg"));
     cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin"]);
